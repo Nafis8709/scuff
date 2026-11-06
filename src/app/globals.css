@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* Scuff design tokens — roadside daylight: concrete, asphalt, signal yellow. */
+:root {
+  --concrete: #eef0f1;
+  --asphalt: #1c252e;
+  --asphalt-soft: #4a5560;
+  --line: #d3d8dc;
+  --marking: #ffffff;
+  --signal: #ffc61a;
+  --signal-deep: #e0a800;
+  --stop: #c42032;
+  --go: #1f7a4c;
+  --warn-bg: #fff4d1;
+  --font-archivo: "Archivo Variable";
+}
+
+@theme inline {
+  --color-concrete: var(--concrete);
+  --color-asphalt: var(--asphalt);
+  --color-asphalt-soft: var(--asphalt-soft);
+  --color-line: var(--line);
+  --color-marking: var(--marking);
+  --color-signal: var(--signal);
+  --color-signal-deep: var(--signal-deep);
+  --color-stop: var(--stop);
+  --color-go: var(--go);
+  --color-warn-bg: var(--warn-bg);
+  --font-sans: var(--font-archivo);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--concrete);
+  color: var(--asphalt);
+  font-family: var(--font-archivo), system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+/* Condensed width of Archivo for headings and the plate */
+.condensed {
+  font-stretch: 72%;
+  font-variation-settings: "wdth" 72;
+}
+
+h1, h2, h3 {
+  font-stretch: 78%;
+  font-variation-settings: "wdth" 78;
+  line-height: 1.1;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 3px solid var(--asphalt);
+  outline-offset: 2px;
+}
+
+/* The licence plate that shows the case code */
+.plate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--signal);
+  color: var(--asphalt);
+  border: 3px solid var(--asphalt);
+  border-radius: 10px;
+  padding: 0.15rem 0.9rem 0.15rem 0.5rem;
+  box-shadow: inset 0 0 0 2px var(--signal), inset 0 0 0 4px rgba(28, 37, 46, 0.35);
+  font-stretch: 65%;
+  font-variation-settings: "wdth" 65;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.plate-band {
+  background: var(--asphalt);
+  color: var(--signal);
+  font-size: 0.55em;
+  letter-spacing: 0.04em;
+  padding: 0.3rem 0.35rem;
+  border-radius: 4px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Lane-line progress: a dashed road marking with stops */
+.lane {
+  background-image: linear-gradient(var(--asphalt) 60%, transparent 40%);
+  background-size: 3px 14px;
+  background-repeat: repeat-y;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+.scanning {
+  position: relative;
+  overflow: hidden;
+}
+.scanning::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(255, 198, 26, 0.55), transparent);
+  animation: sweep 1.6s ease-in-out infinite;
+}
