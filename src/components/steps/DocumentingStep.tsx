@@ -247,7 +247,7 @@ function StatementForm({ caseId, token, me, refresh }: { caseId: string; token: 
           {saved ? "Statement saved" : "Save statement"}
         </Button>
       </div>
-      <p className="mt-2 text-sm text-asphalt-soft">Facts only. Claude writes a neutral summary of both statements and points out where they differ.</p>
+      <p className="mt-2 text-sm text-asphalt-soft">Facts only. The AI writes a neutral summary of both statements and points out where they differ.</p>
     </Panel>
   );
 }
@@ -295,7 +295,7 @@ function ReadySection({ view, token, refresh, me, other }: StepProps & { me: Par
         <p>Everything is in. You can mark yourself ready once the other driver joins.</p>
       ) : (
         <>
-          <p className="mb-4">Everything is in. When you are both ready, Claude reads all the photos and both statements.</p>
+          <p className="mb-4">Everything is in. When you are both ready, the AI reads all the photos and both statements.</p>
           <Button onClick={ready} disabled={busy}>
             {busy ? "Analysing…" : "I'm done documenting"}
           </Button>

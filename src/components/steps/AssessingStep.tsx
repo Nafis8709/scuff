@@ -43,7 +43,7 @@ export default function AssessingStep({ view, token, refresh }: StepProps) {
     <Panel title="Reading the evidence">
       <div className="scanning rounded-md border border-line bg-concrete p-4">
         <p>
-          Claude is looking at {photoCount} photos and both statements: which parts are damaged, how badly, what a
+          The AI is looking at {photoCount} photos and both statements: which parts are damaged, how badly, what a
           repair usually costs, and whether the two accounts agree.
         </p>
       </div>

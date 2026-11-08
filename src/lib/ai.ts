@@ -1,10 +1,12 @@
-// All Claude calls live here.
+// All AI calls live here.
 // 1. assessDamage: reads the scene photos + both statements, returns a structured damage report.
 // 2. checkInvoice: reads the repair invoice and checks every line against the scene evidence.
 //
-// We use Claude's structured outputs (output_config.format = json_schema) so the response
-// is always valid JSON that matches our schema. Totals are computed by our own code,
-// never by the model.
+// Two interchangeable vision models (both return JSON that must match our schema):
+//   - Claude (ANTHROPIC_API_KEY): structured outputs via output_config.format = json_schema
+//   - Gemini (GEMINI_API_KEY, has a free tier): responseMimeType JSON + responseJsonSchema
+// Without either key, clearly-labelled sample results are returned (practice mode).
+// Totals are always computed by our own code, never by the model.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -18,42 +20,67 @@ import type {
 } from "./types";
 import { roundToCents } from "./money";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
-export function aiMode(): "claude" | "mock" {
-  return process.env.ANTHROPIC_API_KEY ? "claude" : "mock";
-}
+export type AiMode = "claude" | "gemini" | "mock";
 
-function getClient(): Anthropic {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+export function aiMode(): AiMode {
+  if (process.env.ANTHROPIC_API_KEY) return "claude";
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  return "mock";
 }
 
 // ---------- shared helpers ----------
 
-type ContentBlock = Anthropic.Messages.ContentBlockParam;
+// A provider-neutral piece of the prompt: some text, or an image as a data URL.
+type Part = { kind: "text"; text: string } | { kind: "image"; dataUrl: string };
 
-function imageBlock(dataUrl: string): ContentBlock {
-  // dataUrl looks like "data:image/jpeg;base64,AAAA..."
+function textPart(text: string): Part {
+  return { kind: "text", text };
+}
+
+function imagePart(dataUrl: string): Part {
+  return { kind: "image", dataUrl };
+}
+
+// "data:image/jpeg;base64,AAAA..." -> { mediaType: "image/jpeg", data: "AAAA..." }
+function splitDataUrl(dataUrl: string): { mediaType: "image/jpeg" | "image/png" | "image/webp"; data: string } {
   const commaIndex = dataUrl.indexOf(",");
   const header = dataUrl.slice(0, commaIndex);
-  const data = dataUrl.slice(commaIndex + 1);
-  let mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" = "image/jpeg";
+  let mediaType: "image/jpeg" | "image/png" | "image/webp" = "image/jpeg";
   if (header.includes("image/png")) mediaType = "image/png";
   if (header.includes("image/webp")) mediaType = "image/webp";
-  return { type: "image", source: { type: "base64", media_type: mediaType, data } };
+  return { mediaType, data: dataUrl.slice(commaIndex + 1) };
 }
 
 function describeParty(p: Party): string {
   return `Driver ${p.id} (${p.name}, ${p.role === "payer" ? "the one paying" : "the one being paid"}), vehicle: ${p.vehicle || "not given"}, plate: ${p.plate || "not given"}`;
 }
 
-async function callClaudeForJson(
-  system: string,
-  content: ContentBlock[],
-  schema: Record<string, unknown>
-): Promise<unknown> {
-  const response = await getClient().messages.create({
-    model: MODEL,
+async function callModelForJson(system: string, parts: Part[], schema: Record<string, unknown>): Promise<unknown> {
+  if (aiMode() === "gemini") {
+    return callGeminiForJson(system, parts, schema);
+  }
+  return callClaudeForJson(system, parts, schema);
+}
+
+// ---------- Claude ----------
+
+async function callClaudeForJson(system: string, parts: Part[], schema: Record<string, unknown>): Promise<unknown> {
+  const content: Anthropic.Messages.ContentBlockParam[] = [];
+  for (const part of parts) {
+    if (part.kind === "text") {
+      content.push({ type: "text", text: part.text });
+    } else {
+      const image = splitDataUrl(part.dataUrl);
+      content.push({ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } });
+    }
+  }
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const response = await client.messages.create({
+    model: CLAUDE_MODEL,
     max_tokens: 4000,
     system,
     messages: [{ role: "user", content }],
@@ -65,6 +92,62 @@ async function callClaudeForJson(
     if (block.type === "text") {
       text += block.text;
     }
+  }
+  return JSON.parse(text);
+}
+
+// ---------- Gemini ----------
+
+async function callGeminiForJson(system: string, parts: Part[], schema: Record<string, unknown>): Promise<unknown> {
+  const geminiParts: Record<string, unknown>[] = [];
+  for (const part of parts) {
+    if (part.kind === "text") {
+      geminiParts.push({ text: part.text });
+    } else {
+      const image = splitDataUrl(part.dataUrl);
+      geminiParts.push({ inline_data: { mime_type: image.mediaType, data: image.data } });
+    }
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+  async function send(generationConfig: Record<string, unknown>, extraInstruction: string) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY || "" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system + extraInstruction }] },
+        contents: [{ role: "user", parts: geminiParts }],
+        generationConfig,
+      }),
+    });
+  }
+
+  // First try with the JSON schema enforced by Gemini itself.
+  let response = await send({ responseMimeType: "application/json", responseJsonSchema: schema, temperature: 0.2 }, "");
+  if (response.status === 400) {
+    // Older models may not accept responseJsonSchema: fall back to JSON mode + schema in the instructions.
+    response = await send(
+      { responseMimeType: "application/json", temperature: 0.2 },
+      `\n\nReply with JSON only, matching this JSON schema exactly:\n${JSON.stringify(schema)}`
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`Gemini request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+  }
+
+  const json = (await response.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  };
+  let text = "";
+  const candidate = json.candidates && json.candidates[0];
+  if (candidate && candidate.content && candidate.content.parts) {
+    for (const part of candidate.content.parts) {
+      if (part.text) text += part.text;
+    }
+  }
+  if (!text) {
+    throw new Error("Gemini returned an empty answer");
   }
   return JSON.parse(text);
 }
@@ -134,10 +217,9 @@ export async function assessDamage(c: SettlementCase, photos: Photo[]): Promise<
     return mockDamageReport(c, photos);
   }
 
-  const content: ContentBlock[] = [];
-  content.push({
-    type: "text",
-    text: [
+  const content: Part[] = [];
+  content.push(
+    textPart([
       `Country: ${c.country}. Currency: ${c.currency}.`,
       ...c.parties.map(describeParty),
       ``,
@@ -145,20 +227,20 @@ export async function assessDamage(c: SettlementCase, photos: Photo[]): Promise<
       ...c.parties.map((p) => `Driver ${p.id}: "${p.statement || "(no statement)"}"`),
       ``,
       `Photos follow. Each photo is preceded by its ID and who took it.`,
-    ].join("\n"),
-  });
+    ].join("\n"))
+  );
 
   // Keep the request reasonable: at most 12 photos.
   let count = 0;
   for (const photo of photos) {
     if (photo.kind === "invoice") continue;
     if (count >= 12) break;
-    content.push({ type: "text", text: `Photo ${photo.id} — taken by Driver ${photo.party}, labelled "${photo.kind}"` });
-    content.push(imageBlock(photo.dataUrl));
+    content.push(textPart(`Photo ${photo.id} — taken by Driver ${photo.party}, labelled "${photo.kind}"`));
+    content.push(imagePart(photo.dataUrl));
     count++;
   }
 
-  const raw = (await callClaudeForJson(DAMAGE_SYSTEM, content, damageSchema)) as RawDamage;
+  const raw = (await callModelForJson(DAMAGE_SYSTEM, content, damageSchema)) as RawDamage;
   return toDamageReport(raw, false);
 }
 
@@ -271,30 +353,29 @@ export async function checkInvoice(
     throw new Error("Damage report missing");
   }
 
-  const content: ContentBlock[] = [];
-  content.push({
-    type: "text",
-    text: [
+  const content: Part[] = [];
+  content.push(
+    textPart([
       `Currency: ${c.currency}. Agreed cap: ${c.capAmount}.`,
       `Damage documented on the receiver's vehicle at the scene:`,
       ...report.receiverDamage.map((z) => `- ${z.zone} (${z.severity}): ${z.description}`),
       `Damage on the payer's own vehicle (NOT covered): ${report.payerDamage.map((z) => z.zone).join(", ") || "none"}`,
       ``,
       `Scene photos of the receiver's side follow, then the invoice.`,
-    ].join("\n"),
-  });
+    ].join("\n"))
+  );
 
   let count = 0;
   for (const photo of scenePhotos) {
     if (count >= 8) break;
-    content.push({ type: "text", text: `Scene photo ${photo.id} (Driver ${photo.party}, ${photo.kind})` });
-    content.push(imageBlock(photo.dataUrl));
+    content.push(textPart(`Scene photo ${photo.id} (Driver ${photo.party}, ${photo.kind})`));
+    content.push(imagePart(photo.dataUrl));
     count++;
   }
-  content.push({ type: "text", text: "REPAIR INVOICE:" });
-  content.push(imageBlock(invoicePhoto.dataUrl));
+  content.push(textPart("REPAIR INVOICE:"));
+  content.push(imagePart(invoicePhoto.dataUrl));
 
-  const raw = (await callClaudeForJson(INVOICE_SYSTEM, content, invoiceSchema)) as RawInvoice;
+  const raw = (await callModelForJson(INVOICE_SYSTEM, content, invoiceSchema)) as RawInvoice;
   return toInvoiceCheck(raw, c.capAmount, false);
 }
 
@@ -400,7 +481,7 @@ function mockInvoiceCheck(c: SettlementCase): InvoiceCheck {
       { description: "Left headlamp assembly", amount: 210, verdict: "not_supported", reason: "No headlamp damage was photographed at the scene.", matched_zone: "" },
       { description: "Shop supplies", amount: 30, verdict: "unclear", reason: "Not itemised, cannot link to the documented damage.", matched_zone: "" },
     ],
-    notes: "Mock result: add an ANTHROPIC_API_KEY to check real invoices.",
+    notes: "Sample result: add an ANTHROPIC_API_KEY or GEMINI_API_KEY to check real invoices.",
   };
   return toInvoiceCheck(raw, c.capAmount, true);
 }

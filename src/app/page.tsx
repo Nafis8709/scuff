@@ -19,7 +19,7 @@ export default function Home() {
 
       <ol className="mt-8 space-y-4 border-l-4 border-dashed border-asphalt pl-5">
         <li>
-          <strong>At the scene.</strong> Both drivers add photos and a short statement. Claude writes a neutral damage
+          <strong>At the scene.</strong> Both drivers add photos and a short statement. The AI writes a neutral damage
           report and a repair estimate.
         </li>
         <li>

@@ -1,6 +1,6 @@
 # Scuff: settle a minor car scrape fairly, before you drive away
 
-Scuff is an entry for the **PayPal AI Hackathon 2026**. It is built with **Braintree** (a PayPal service: authorize, partial settlement, void, vaulted re-authorization), an alternative **PayPal Orders and Payments API** integration, and **Claude** (vision plus structured outputs).
+Scuff is an entry for the **PayPal AI Hackathon 2026**. It is built with **Braintree** (a PayPal service: authorize, partial settlement, void, vaulted re-authorization), an alternative **PayPal Orders and Payments API** integration, and a vision model with structured outputs: **Gemini** (free tier) or **Claude**.
 
 ## The problem
 
@@ -16,11 +16,11 @@ Neither driver trusts the other, so one of them usually ends up feeling cheated.
 1. **At the scene.** One driver starts a case and shows a QR code; the other scans it, with no app to install.
    - Both drivers answer an injury question. If anyone is hurt, the settlement is stopped.
    - Both add photos and a short statement.
-   - **Claude** reads every photo and both statements. It produces a structured damage report: damaged zones, severity, the photo IDs that show each zone, and a repair-cost range. It also gives a neutral summary of what happened and lists any points where the two statements disagree.
+   - The AI (**Gemini** or **Claude**) reads every photo and both statements. It produces a structured damage report: damaged zones, severity, the photo IDs that show each zone, and a repair-cost range. It also gives a neutral summary of what happened and lists any points where the two statements disagree.
 2. **Agree and hold.** Both drivers sign one plain-language agreement with a **cap**.
    - The paying driver places an **authorization hold** for the cap through Braintree (card, PayPal or Venmo). The money is reserved, so nobody can vanish, but nothing is charged yet.
 3. **Pay what the evidence supports.** After the repair, the receiver uploads the invoice.
-   - **Claude** checks every invoice line against the scene photos and marks it *matches the scene*, *not documented* or *unclear*.
+   - The AI checks every invoice line against the scene photos and marks it *matches the scene*, *not documented* or *unclear*.
    - Our own code (not the model) adds up the matching lines and limits the total to the cap.
    - **The AI advises, people decide.** The paying driver can choose to pay any line the AI rejected or wasn't sure about.
    - When the receiver accepts, **only that amount is charged** from the hold (a partial settlement). The rest of the hold is released.
@@ -65,9 +65,13 @@ Holding money for two strangers is a regulated activity: PayPal's Acceptable Use
 
 In this prototype, Braintree sandbox funds settle to Scuff's sandbox merchant account.
 
-## How Claude is used
+## How AI is used
 
-Both calls are in `src/lib/ai.ts`. They use **structured outputs** (`output_config.format` with a JSON schema), so every response is valid, typed JSON.
+Both calls are in `src/lib/ai.ts`, and either model can serve them:
+- **Gemini** (`GEMINI_API_KEY`, free tier): `responseMimeType: application/json` with `responseJsonSchema`.
+- **Claude** (`ANTHROPIC_API_KEY`): structured outputs via `output_config.format`.
+
+In both cases every response is valid JSON that matches our schema.
 
 - **Damage assessment.** Input is up to 12 labelled photos plus both statements. Output is damage zones with photo citations, a cost range, a neutral summary, statement conflicts, safety flags (airbags deployed, leaks, unsafe to drive, which means "use your insurer"), and suggestions for missing photos.
 - **Invoice check.** Input is the invoice image, the scene photos and the damage report. Output is a verdict and a reason for every line.
@@ -90,7 +94,7 @@ npm run dev                  # http://localhost:3000
 
 **With keys:**
 
-- `ANTHROPIC_API_KEY`: from the Claude Console.
+- AI: `GEMINI_API_KEY` from Google AI Studio (free tier), or `ANTHROPIC_API_KEY` from the Claude Console.
 - Braintree: `BRAINTREE_MERCHANT_ID`, `BRAINTREE_PUBLIC_KEY` and `BRAINTREE_PRIVATE_KEY`, from a free sandbox account at braintreepayments.com/sandbox (Settings → API). Pay with the test card `4111 1111 1111 1111`, any future expiry date and any CVV.
 - Or PayPal REST instead: `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` from a sandbox app at developer.paypal.com.
 
@@ -110,7 +114,7 @@ Open **`/demo`**. It creates a fresh case and shows both drivers' phones side by
 
 ```
 src/lib/cases.ts      all business rules: who may do what, in which status
-src/lib/ai.ts         Claude calls (damage report, invoice check) and practice-mode samples
+src/lib/ai.ts         AI calls (damage report, invoice check) via Gemini or Claude, plus practice-mode samples
 src/lib/payments.ts   picks the provider: Braintree, PayPal REST, or simulated
 src/lib/braintree.ts  Braintree: client token, authorize (vaulted), partial settle, void
 src/lib/paypal.ts     PayPal REST: create order, authorize, capture, void, reauthorize

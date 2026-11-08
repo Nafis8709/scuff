@@ -147,5 +147,5 @@ export interface CaseView {
   photos: Omit<Photo, "dataUrl">[];
   paymentProvider: "braintree" | "paypal" | "mock";
   paypalClientId: string;
-  aiMode: "claude" | "mock";
+  aiMode: "claude" | "gemini" | "mock";
 }
