@@ -451,6 +451,7 @@ export function setLineApproval(c: SettlementCase, me: Party, lineIndex: number,
   if (!check || !c.payment) throw new ActionError("No invoice to review");
   const line = check.lines[lineIndex];
   if (!line) throw new ActionError("No such invoice line");
+  if (line.isTax) throw new ActionError("Tax is shared out automatically over the approved lines");
   if (line.verdict === "supported") throw new ActionError("This line is already included");
   line.payerApproved = approved;
   check.approvedAmount = ai.approvedAmount(check.lines, Math.min(c.capAmount, c.payment.authorizedAmount));

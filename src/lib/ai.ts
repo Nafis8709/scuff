@@ -19,6 +19,7 @@ import type {
   SettlementCase,
 } from "./types";
 import { roundToCents } from "./money";
+import { approvedAmount, totalSupported } from "./invoice-math";
 
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
 // The free tier sometimes answers "high demand" (503) for a model, so we try a chain of models in order.
@@ -339,10 +340,11 @@ const invoiceSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["description", "amount", "verdict", "reason", "matched_zone"],
+        required: ["description", "amount", "is_tax", "verdict", "reason", "matched_zone"],
         properties: {
           description: { type: "string" },
-          amount: { type: "number", description: "Line amount including its share of tax if tax is shown per line" },
+          amount: { type: "number", description: "The amount exactly as printed on the invoice" },
+          is_tax: { type: "boolean", description: "True only for a separate sales tax / VAT / GST line" },
           verdict: { type: "string", enum: ["supported", "not_supported", "unclear"] },
           reason: { type: "string", description: "One short sentence a driver can understand" },
           matched_zone: { type: "string", description: "Damage zone from the report this line repairs, or empty string" },
@@ -361,8 +363,8 @@ For every invoice line decide:
 - "not_supported": the work is on a part or area with no documented damage, looks like maintenance or an upgrade, or is clearly unrelated.
 - "unclear": you cannot tell from the evidence (e.g. a vague "misc parts" line).
 Be fair and specific. Quote the zone name from the report in matched_zone when it fits.
-If tax is a separate line, judge it as supported and set its amount to only the tax on the supported lines when you can work it out; explain in notes.
-Read amounts exactly as printed. Do not invent lines.`;
+If tax is a separate line, set is_tax to true and keep the printed amount: the system shares tax out over the approved lines itself, so do not calculate tax.
+Read amounts exactly as printed. Do not invent lines and do not add up totals.`;
 
 export async function checkInvoice(
   c: SettlementCase,
@@ -410,6 +412,7 @@ interface RawInvoice {
   lines: {
     description: string;
     amount: number;
+    is_tax: boolean;
     verdict: InvoiceLine["verdict"];
     reason: string;
     matched_zone: string;
@@ -417,27 +420,8 @@ interface RawInvoice {
   notes: string;
 }
 
-// Our own deterministic math (never the model's): add up the supported lines.
-export function totalSupported(lines: InvoiceLine[]): number {
-  let total = 0;
-  for (const line of lines) {
-    if (line.verdict === "supported") {
-      total += line.amount;
-    }
-  }
-  return roundToCents(total);
-}
-
-// What will actually be paid: supported lines + lines the payer chose to approve, never more than the cap.
-export function approvedAmount(lines: InvoiceLine[], cap: number): number {
-  let total = 0;
-  for (const line of lines) {
-    if (line.verdict === "supported" || line.payerApproved) {
-      total += line.amount;
-    }
-  }
-  return Math.min(roundToCents(total), cap);
-}
+// Money math lives in invoice-math.ts (never the model's job).
+export { approvedAmount, totalSupported } from "./invoice-math";
 
 function toInvoiceCheck(raw: RawInvoice, cap: number, mock: boolean): InvoiceCheck {
   const lines: InvoiceLine[] = [];
@@ -449,6 +433,7 @@ function toInvoiceCheck(raw: RawInvoice, cap: number, mock: boolean): InvoiceChe
       reason: l.reason,
       matchedZone: l.matched_zone,
       payerApproved: false,
+      isTax: l.is_tax === true,
     });
   }
   const supported = totalSupported(lines);
@@ -498,12 +483,13 @@ function mockInvoiceCheck(c: SettlementCase): InvoiceCheck {
   const raw: RawInvoice = {
     shop_name: "Demo Body Shop",
     invoice_date: new Date().toISOString().slice(0, 10),
-    invoice_total: 612,
+    invoice_total: 648.72,
     lines: [
-      { description: "Rear bumper repair and refinish", amount: 310, verdict: "supported", reason: "Matches the dent and scuffs on the rear bumper.", matched_zone: "rear bumper" },
-      { description: "Paint materials", amount: 62, verdict: "supported", reason: "Needed to refinish the rear bumper.", matched_zone: "rear bumper" },
-      { description: "Left headlamp assembly", amount: 210, verdict: "not_supported", reason: "No headlamp damage was photographed at the scene.", matched_zone: "" },
-      { description: "Shop supplies", amount: 30, verdict: "unclear", reason: "Not itemised, cannot link to the documented damage.", matched_zone: "" },
+      { description: "Rear bumper repair and refinish", amount: 310, is_tax: false, verdict: "supported", reason: "Matches the dent and scuffs on the rear bumper.", matched_zone: "rear bumper" },
+      { description: "Paint materials", amount: 62, is_tax: false, verdict: "supported", reason: "Needed to refinish the rear bumper.", matched_zone: "rear bumper" },
+      { description: "Left headlamp assembly", amount: 210, is_tax: false, verdict: "not_supported", reason: "No headlamp damage was photographed at the scene.", matched_zone: "" },
+      { description: "Shop supplies", amount: 30, is_tax: false, verdict: "unclear", reason: "Not itemised, cannot link to the documented damage.", matched_zone: "" },
+      { description: "Sales tax (6%)", amount: 36.72, is_tax: true, verdict: "supported", reason: "Tax on the invoice.", matched_zone: "" },
     ],
     notes: "Sample result: add an ANTHROPIC_API_KEY or GEMINI_API_KEY to check real invoices.",
   };

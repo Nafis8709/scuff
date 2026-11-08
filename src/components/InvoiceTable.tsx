@@ -3,6 +3,7 @@
 
 import type { InvoiceCheck, LineVerdict } from "@/lib/types";
 import { formatMoney } from "@/lib/money";
+import { countsAsApproved, taxShare } from "@/lib/invoice-math";
 
 const VERDICT: Record<LineVerdict, { label: string; className: string }> = {
   supported: { label: "Matches the scene", className: "bg-go text-marking" },
@@ -30,6 +31,21 @@ export default function InvoiceTable({
       </p>
       <ul className="divide-y divide-line rounded-md border border-line">
         {check.lines.map((line, index) => {
+          if (line.isTax) {
+            return (
+              <li key={index} className="p-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-semibold">{line.description}</span>
+                  <span className="condensed shrink-0 text-lg font-bold">
+                    {formatMoney(taxShare(check.lines, line, countsAsApproved), currency)}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm">
+                  Only the tax on the approved lines is paid. Printed on the invoice: {formatMoney(line.amount, currency)}.
+                </p>
+              </li>
+            );
+          }
           const counted = line.verdict === "supported" || line.payerApproved;
           return (
           <li key={index} className="p-3">
@@ -67,7 +83,7 @@ export default function InvoiceTable({
             <dt>Added by the paying driver</dt>
             <dd className="text-right">
               {formatMoney(
-                check.lines.filter((l) => l.payerApproved && l.verdict !== "supported").reduce((sum, l) => sum + l.amount, 0),
+                check.lines.filter((l) => l.payerApproved && !l.isTax && l.verdict !== "supported").reduce((sum, l) => sum + l.amount, 0),
                 currency
               )}
             </dd>

@@ -76,6 +76,7 @@ export interface InvoiceLine {
   reason: string;
   matchedZone: string; // the damage zone this line relates to, or ""
   payerApproved: boolean; // the payer chose to pay this line even though the AI did not support it
+  isTax: boolean; // tax lines are prorated by our code, not judged by the AI
 }
 
 export interface InvoiceCheck {
