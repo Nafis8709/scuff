@@ -2,6 +2,8 @@
 
 Scuff is an entry for the **PayPal AI Hackathon 2026**. It is built with **Braintree** (a PayPal service: authorize, partial settlement, void, vaulted re-authorization), an alternative **PayPal Orders and Payments API** integration, and a vision model with structured outputs: **Gemini** (free tier) or **Claude**.
 
+**Live demo:** https://scuff-ajvb.onrender.com. Open [`/demo`](https://scuff-ajvb.onrender.com/demo) to play both drivers side by side. It runs on Render's free plan, so the first visit after a quiet period can take about 50 seconds to wake up.
+
 ## The problem
 
 After a minor scrape with no injuries, many drivers skip insurance and agree to "sort it out between us". In one survey, 42% of Ontario drivers said they would consider a cash settlement after a collision. These handshake deals usually fail in one of two ways:
