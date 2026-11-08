@@ -21,7 +21,12 @@ import type {
 import { roundToCents } from "./money";
 
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+// The free tier sometimes answers "high demand" (503) for a model, so we try a chain of models in order.
+// Override with a comma-separated GEMINI_MODEL, e.g. "gemini-3.6-flash,gemini-3.1-flash-lite".
+const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.6-flash,gemini-3-flash-preview,gemini-3.1-flash-lite,gemini-flash-lite-latest")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
 
 export type AiMode = "claude" | "gemini" | "mock";
 
@@ -109,7 +114,25 @@ async function callGeminiForJson(system: string, parts: Part[], schema: Record<s
     }
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const problems: string[] = [];
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await askGeminiModel(model, system, geminiParts, schema);
+    } catch (error) {
+      // Busy, rate-limited or slow: move on to the next model in the chain.
+      problems.push(`${model}: ${(error as Error).message.slice(0, 120)}`);
+    }
+  }
+  throw new Error(`All Gemini models failed. ${problems.join(" | ")}`);
+}
+
+async function askGeminiModel(
+  model: string,
+  system: string,
+  geminiParts: Record<string, unknown>[],
+  schema: Record<string, unknown>
+): Promise<unknown> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   async function send(generationConfig: Record<string, unknown>, extraInstruction: string) {
     return fetch(url, {
@@ -120,20 +143,21 @@ async function callGeminiForJson(system: string, parts: Part[], schema: Record<s
         contents: [{ role: "user", parts: geminiParts }],
         generationConfig,
       }),
+      signal: AbortSignal.timeout(60_000), // a stuck model should not block the drivers
     });
   }
 
   // First try with the JSON schema enforced by Gemini itself.
   let response = await send({ responseMimeType: "application/json", responseJsonSchema: schema, temperature: 0.2 }, "");
   if (response.status === 400) {
-    // Older models may not accept responseJsonSchema: fall back to JSON mode + schema in the instructions.
+    // Some models do not accept responseJsonSchema: use JSON mode + the schema in the instructions.
     response = await send(
       { responseMimeType: "application/json", temperature: 0.2 },
       `\n\nReply with JSON only, matching this JSON schema exactly:\n${JSON.stringify(schema)}`
     );
   }
   if (!response.ok) {
-    throw new Error(`Gemini request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+    throw new Error(`HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
   }
 
   const json = (await response.json()) as {
@@ -147,7 +171,7 @@ async function callGeminiForJson(system: string, parts: Part[], schema: Record<s
     }
   }
   if (!text) {
-    throw new Error("Gemini returned an empty answer");
+    throw new Error("empty answer");
   }
   return JSON.parse(text);
 }
