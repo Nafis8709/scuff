@@ -47,10 +47,19 @@ export default function DemoSplit() {
         <Link href="/">
           <Plate code="SCUFF" />
         </Link>
-        <p className="max-w-prose text-asphalt-soft">
-          Two phones, one case. Alex (left) is paying; Sam (right) is being paid. Use your own photos of any car scratch
-          or dent, and a photo or screenshot of any repair invoice.
-        </p>
+        <div className="max-w-prose text-asphalt-soft">
+          <p>
+            Two phones, one case. Alex (left) is paying; Sam (right) is being paid. Use photos of any car scratch or dent.
+          </p>
+          <p className="mt-1">
+            No repair bill handy?{" "}
+            <a href="/samples/sample-invoice.png" download className="font-semibold text-asphalt underline underline-offset-4">
+              Download a sample invoice
+            </a>{" "}
+            (it includes a headlamp and brake pads that were not part of the scrape). Test card: 4111 1111 1111 1111, any
+            future date, any CVV.
+          </p>
+        </div>
       </header>
       {error ? <p className="text-stop">{error}</p> : null}
       {!demo ? (

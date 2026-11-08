@@ -75,6 +75,7 @@ export interface InvoiceLine {
   verdict: LineVerdict;
   reason: string;
   matchedZone: string; // the damage zone this line relates to, or ""
+  payerApproved: boolean; // the payer chose to pay this line even though the AI did not support it
 }
 
 export interface InvoiceCheck {
@@ -83,19 +84,21 @@ export interface InvoiceCheck {
   lines: InvoiceLine[];
   invoiceTotal: number; // total printed on the invoice
   supportedTotal: number; // sum of supported lines, computed by our code (not by the AI)
-  approvedAmount: number; // supportedTotal limited to the agreed cap
+  approvedAmount: number; // supported + payer-approved lines, limited to the agreed cap
   notes: string;
   generatedAt: string;
   mock: boolean;
 }
 
 export interface PaymentState {
-  mode: "sandbox" | "mock";
-  orderId: string;
-  authorizationId: string;
+  provider: "braintree" | "paypal" | "mock";
+  orderId: string; // PayPal Orders only
+  authorizationId: string; // PayPal authorization id, or Braintree transaction id
+  paymentMethodToken: string; // Braintree vault token (used to renew the hold)
+  description: string; // e.g. "Visa ending 1111"
   authorizedAmount: number;
   authorizedAt: string;
-  expiresAt: string; // PayPal authorizations last up to 29 days
+  expiresAt: string; // when the authorization stops being guaranteed
   captureId: string;
   capturedAmount: number;
   capturedAt: string;
@@ -142,6 +145,7 @@ export interface CaseView {
   case: SettlementCase;
   me: PartyId;
   photos: Omit<Photo, "dataUrl">[];
+  paymentProvider: "braintree" | "paypal" | "mock";
   paypalClientId: string;
   aiMode: "claude" | "mock";
 }

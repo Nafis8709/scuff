@@ -54,10 +54,10 @@ export default async function ReceiptPage({
       {c.payment && (
         <Panel title="Payment" tone={c.status === "settled" ? "go" : "plain"}>
           {c.payment.capturedAmount > 0 && (
-            <p className="condensed mb-3 text-4xl font-bold">{formatMoney(c.payment.capturedAmount, c.currency)} paid via PayPal</p>
+            <p className="condensed mb-3 text-4xl font-bold">{formatMoney(c.payment.capturedAmount, c.currency)} paid</p>
           )}
           <HoldSummary payment={c.payment} currency={c.currency} />
-          {c.payment.mode === "mock" && <p className="mt-2 text-sm">Simulated payment (practice mode).</p>}
+          {c.payment.provider === "mock" && <p className="mt-2 text-sm">Simulated payment (practice mode).</p>}
         </Panel>
       )}
 

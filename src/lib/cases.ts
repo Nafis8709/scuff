@@ -6,6 +6,7 @@ import { customAlphabet } from "nanoid";
 import * as db from "./db";
 import * as ai from "./ai";
 import * as paypal from "./paypal";
+import * as payments from "./payments";
 import { buildAgreementText, getPayer, getReceiver, hashText } from "./agreement";
 import { roundToCents } from "./money";
 import type { CaseView, Party, PartyId, Photo, Role, SettlementCase } from "./types";
@@ -94,7 +95,8 @@ export function buildView(c: SettlementCase, me: Party): CaseView {
     case: copy,
     me: me.id,
     photos,
-    paypalClientId: paypal.paypalClientId(),
+    paymentProvider: payments.activeProvider(),
+    paypalClientId: payments.activeProvider() === "paypal" ? paypal.paypalClientId() : "",
     aiMode: ai.aiMode(),
   };
 }
@@ -333,17 +335,27 @@ export function sign(c: SettlementCase, me: Party, typedName: string, agreementH
 
   if (c.parties.every((p) => p.signature !== null)) {
     c.status = "funding";
-    addEvent(c, "system", "Both drivers signed. Waiting for the payer to place the PayPal hold.");
+    addEvent(c, "system", "Both drivers signed. Waiting for the payer to place the hold.");
   }
 }
 
-// ---------- PayPal hold ----------
+// ---------- the hold (Braintree, PayPal Orders, or simulated) ----------
 
+const PROVIDER_NAME = { braintree: "Braintree", paypal: "PayPal", mock: "simulated" };
+
+// Braintree: the browser needs a client token to show the card / PayPal form.
+export async function paymentClientToken(c: SettlementCase, me: Party): Promise<string> {
+  requireStatus(c, ["funding"]);
+  requireRole(me, "payer");
+  return payments.clientToken();
+}
+
+// PayPal Orders: an order must exist before the buyer approves it.
 export async function startHold(c: SettlementCase, me: Party): Promise<string> {
   requireStatus(c, ["funding"]);
   requireRole(me, "payer");
   const receiver = getReceiver(c);
-  const orderId = await paypal.createHoldOrder({
+  const orderId = await payments.createPayPalOrder({
     caseId: c.id,
     caseCode: c.code,
     amount: c.capAmount,
@@ -354,33 +366,57 @@ export async function startHold(c: SettlementCase, me: Party): Promise<string> {
   return orderId;
 }
 
-export async function confirmHold(c: SettlementCase, me: Party, orderId: string): Promise<void> {
+export async function confirmHold(c: SettlementCase, me: Party, input: { nonce: string; orderId: string }): Promise<void> {
   requireStatus(c, ["funding"]);
   requireRole(me, "payer");
-  const auth = await paypal.authorizeOrder(orderId, c.capAmount);
+  let hold: payments.Hold;
+  try {
+    hold = await payments.placeHold({
+      amount: c.capAmount,
+      currency: c.currency,
+      caseCode: c.code,
+      nonce: input.nonce,
+      orderId: input.orderId,
+    });
+  } catch (error) {
+    throw new ActionError((error as Error).message, 402);
+  }
   c.payment = {
-    mode: paypal.paypalMode(),
-    orderId,
-    authorizationId: auth.authorizationId,
-    authorizedAmount: auth.amount,
+    provider: hold.provider,
+    orderId: hold.orderId,
+    authorizationId: hold.authorizationId,
+    paymentMethodToken: hold.paymentMethodToken,
+    description: hold.description,
+    authorizedAmount: hold.amount,
     authorizedAt: now(),
-    expiresAt: auth.expiresAt,
+    expiresAt: hold.expiresAt,
     captureId: "",
     capturedAmount: 0,
     capturedAt: "",
     released: false,
   };
   c.status = "repairing";
-  addEvent(c, me.id, `${me.name} placed a PayPal hold of ${auth.amount} ${c.currency} (authorization ${auth.authorizationId}). No money has moved.`);
+  addEvent(
+    c,
+    me.id,
+    `${me.name} placed a ${PROVIDER_NAME[hold.provider]} hold of ${hold.amount} ${c.currency} on ${hold.description} (authorization ${hold.authorizationId}). Nothing has been charged.`
+  );
 }
 
 export async function extendHold(c: SettlementCase, me: Party): Promise<void> {
   requireStatus(c, ["repairing", "reviewing"]);
   if (!c.payment) throw new ActionError("No hold to extend");
-  const auth = await paypal.reauthorizeHold(c.payment.authorizationId, c.payment.authorizedAmount, c.currency);
-  c.payment.authorizationId = auth.authorizationId;
-  c.payment.expiresAt = auth.expiresAt;
-  addEvent(c, me.id, `Hold re-authorized (${auth.authorizationId}).`);
+  const renewed = await payments.renewHold({
+    provider: c.payment.provider,
+    authorizationId: c.payment.authorizationId,
+    paymentMethodToken: c.payment.paymentMethodToken,
+    amount: c.payment.authorizedAmount,
+    currency: c.currency,
+    caseCode: c.code,
+  });
+  c.payment.authorizationId = renewed.authorizationId;
+  c.payment.expiresAt = renewed.expiresAt;
+  addEvent(c, me.id, `Hold renewed (${renewed.authorizationId}), now valid until ${renewed.expiresAt.slice(0, 10)}.`);
 }
 
 // ---------- invoice and settlement ----------
@@ -407,6 +443,24 @@ export async function submitInvoice(c: SettlementCase, me: Party, dataUrl: strin
   addEvent(c, "system", `Invoice checked: ${check.supportedTotal} of ${check.invoiceTotal} ${c.currency} matches the scene evidence.`);
 }
 
+// The AI advises, people decide: the payer can choose to pay a line the AI did not support.
+export function setLineApproval(c: SettlementCase, me: Party, lineIndex: number, approved: boolean): void {
+  requireStatus(c, ["reviewing"]);
+  requireRole(me, "payer");
+  const check = c.invoiceCheck;
+  if (!check || !c.payment) throw new ActionError("No invoice to review");
+  const line = check.lines[lineIndex];
+  if (!line) throw new ActionError("No such invoice line");
+  if (line.verdict === "supported") throw new ActionError("This line is already included");
+  line.payerApproved = approved;
+  check.approvedAmount = ai.approvedAmount(check.lines, Math.min(c.capAmount, c.payment.authorizedAmount));
+  addEvent(
+    c,
+    me.id,
+    `${me.name} ${approved ? "agreed to pay" : "withdrew approval for"} "${line.description}" (${line.amount} ${c.currency}). Amount to be paid is now ${check.approvedAmount} ${c.currency}.`
+  );
+}
+
 export function rejectInvoiceCheck(c: SettlementCase, me: Party): void {
   requireStatus(c, ["reviewing"]);
   requireRole(me, "receiver");
@@ -423,19 +477,25 @@ export async function acceptAndSettle(c: SettlementCase, me: Party): Promise<voi
 
   const amount = Math.min(c.invoiceCheck.approvedAmount, c.payment.authorizedAmount);
   if (amount <= 0) {
-    await paypal.voidHold(c.payment.authorizationId);
+    await payments.releaseHold(c.payment.provider, c.payment.authorizationId);
     c.payment.released = true;
     c.status = "closed";
     addEvent(c, "system", "Verified amount was 0. The whole hold was released.");
     return;
   }
 
-  const captureId = await paypal.captureVerified({
-    authorizationId: c.payment.authorizationId,
-    amount,
-    currency: c.currency,
-    caseCode: c.code,
-  });
+  let captureId = "";
+  try {
+    captureId = await payments.captureVerified({
+      provider: c.payment.provider,
+      authorizationId: c.payment.authorizationId,
+      amount,
+      currency: c.currency,
+      caseCode: c.code,
+    });
+  } catch (error) {
+    throw new ActionError((error as Error).message, 402);
+  }
   c.payment.captureId = captureId;
   c.payment.capturedAmount = amount;
   c.payment.capturedAt = now();

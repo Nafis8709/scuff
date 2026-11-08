@@ -10,6 +10,7 @@ import { formatMoney } from "@/lib/money";
 import type { StepProps } from "../CaseRoom";
 import { caseAction } from "../client-api";
 import { Button, ErrorText, Panel } from "../ui";
+import BraintreeHold from "../BraintreeHold";
 
 export default function FundingStep({ view, token, refresh }: StepProps) {
   const c = view.case;
@@ -28,7 +29,7 @@ export default function FundingStep({ view, token, refresh }: StepProps) {
         <p>
           Both of you signed. The other driver is now placing a PayPal hold of{" "}
           <strong>{formatMoney(c.capAmount, c.currency)}</strong>. Once it is in place you can go ahead with the repair:
-          the money is reserved for you.
+          the money is reserved for this repair.
         </p>
       </Panel>
     );
@@ -66,13 +67,15 @@ export default function FundingStep({ view, token, refresh }: StepProps) {
     <Panel title="Place the hold">
       <p className="condensed text-5xl font-bold">{formatMoney(c.capAmount, c.currency)}</p>
       <ul className="mt-3 list-disc space-y-1 pl-5">
-        <li>PayPal reserves this amount. Nothing is charged today.</li>
-        <li>Only the part of the repair invoice that matches the scene evidence is charged, straight to {receiver.name}.</li>
+        <li>This amount is reserved on your card or PayPal. Nothing is charged today.</li>
+        <li>Later, only the part of {receiver.name}&apos;s repair invoice that matches the scene evidence is charged.</li>
         <li>The rest is released automatically. If no invoice arrives, the whole hold expires.</li>
       </ul>
 
       <div className="mt-5">
-        {view.paypalClientId ? (
+        {view.paymentProvider === "braintree" ? (
+          <BraintreeHold caseId={c.id} token={token} amountLabel={formatMoney(c.capAmount, c.currency)} onDone={refresh} />
+        ) : view.paymentProvider === "paypal" ? (
           <PayPalScriptProvider
             options={{
               clientId: view.paypalClientId,
@@ -94,7 +97,7 @@ export default function FundingStep({ view, token, refresh }: StepProps) {
           </PayPalScriptProvider>
         ) : (
           <Button onClick={mockHold} disabled={busy}>
-            {busy ? "Placing hold…" : "Place hold (simulated PayPal)"}
+            {busy ? "Placing hold…" : "Place hold (simulated payment)"}
           </Button>
         )}
       </div>

@@ -102,7 +102,7 @@ export default function CaseRoom({ caseId }: { caseId: string }) {
 
       <Progress status={c.status} />
 
-      <PracticeBanner aiMock={view.aiMode === "mock"} paymentsMock={!view.paypalClientId} />
+      <PracticeBanner aiMock={view.aiMode === "mock"} paymentsMock={view.paymentProvider === "mock"} />
 
       <div className="space-y-5">
         {c.status === "waiting" && <WaitingStep {...stepProps} />}
@@ -136,7 +136,7 @@ function PracticeBanner({ aiMock, paymentsMock }: { aiMock: boolean; paymentsMoc
   if (!paymentsMock) what = "AI results are sample data";
   return (
     <p className="mb-4 rounded-md border border-signal-deep bg-warn-bg px-3 py-2 text-sm">
-      Practice mode: {what}. Add the API keys from .env.example to use Claude and the PayPal sandbox.
+      Practice mode: {what}. Add the keys from .env.example to use Claude and the Braintree / PayPal sandbox.
     </p>
   );
 }

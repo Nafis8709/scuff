@@ -26,6 +26,16 @@ export default function ReviewingStep({ view, token, refresh }: StepProps) {
 
   const releasedAmount = Math.max(0, c.payment.authorizedAmount - check.approvedAmount);
 
+  async function toggleLine(lineIndex: number, approved: boolean) {
+    setError("");
+    try {
+      await caseAction(c.id, token, "approveLine", { lineIndex, approved });
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function act(action: "accept" | "rejectCheck") {
     setBusy(true);
     setError("");
@@ -45,14 +55,19 @@ export default function ReviewingStep({ view, token, refresh }: StepProps) {
           View the uploaded invoice
         </a>
       )}
-      <InvoiceTable check={check} currency={c.currency} cap={c.capAmount} />
+      <InvoiceTable
+        check={check}
+        currency={c.currency}
+        cap={Math.min(c.capAmount, c.payment.authorizedAmount)}
+        onToggleLine={me.role === "payer" ? toggleLine : undefined}
+      />
       {check.mock && <p className="mt-2 text-sm text-asphalt-soft">Sample check (practice mode).</p>}
 
       <div className="mt-5 rounded-md bg-concrete p-4">
         {me.role === "receiver" ? (
           <>
             <p>
-              Accepting pays you {formatMoney(check.approvedAmount, c.currency)} through PayPal now and releases{" "}
+              Accepting charges {formatMoney(check.approvedAmount, c.currency)} from the hold for your repair and releases{" "}
               {formatMoney(releasedAmount, c.currency)} back to the other driver. This completes the settlement.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
@@ -67,7 +82,8 @@ export default function ReviewingStep({ view, token, refresh }: StepProps) {
         ) : (
           <p>
             {receiver.name} is reviewing this result. When they accept, {formatMoney(check.approvedAmount, c.currency)} is
-            charged from your hold and {formatMoney(releasedAmount, c.currency)} is released.
+            charged from your hold and {formatMoney(releasedAmount, c.currency)} is released. If you think a crossed-out
+            line is fair, you can choose to pay it.
           </p>
         )}
       </div>

@@ -312,7 +312,7 @@ interface RawInvoice {
   notes: string;
 }
 
-// Our own deterministic math: only "supported" lines count, and never more than the cap.
+// Our own deterministic math (never the model's): add up the supported lines.
 export function totalSupported(lines: InvoiceLine[]): number {
   let total = 0;
   for (const line of lines) {
@@ -321,6 +321,17 @@ export function totalSupported(lines: InvoiceLine[]): number {
     }
   }
   return roundToCents(total);
+}
+
+// What will actually be paid: supported lines + lines the payer chose to approve, never more than the cap.
+export function approvedAmount(lines: InvoiceLine[], cap: number): number {
+  let total = 0;
+  for (const line of lines) {
+    if (line.verdict === "supported" || line.payerApproved) {
+      total += line.amount;
+    }
+  }
+  return Math.min(roundToCents(total), cap);
 }
 
 function toInvoiceCheck(raw: RawInvoice, cap: number, mock: boolean): InvoiceCheck {
@@ -332,6 +343,7 @@ function toInvoiceCheck(raw: RawInvoice, cap: number, mock: boolean): InvoiceChe
       verdict: l.verdict,
       reason: l.reason,
       matchedZone: l.matched_zone,
+      payerApproved: false,
     });
   }
   const supported = totalSupported(lines);
@@ -341,7 +353,7 @@ function toInvoiceCheck(raw: RawInvoice, cap: number, mock: boolean): InvoiceChe
     lines,
     invoiceTotal: roundToCents(raw.invoice_total),
     supportedTotal: supported,
-    approvedAmount: Math.min(supported, cap),
+    approvedAmount: approvedAmount(lines, cap),
     notes: raw.notes,
     generatedAt: new Date().toISOString(),
     mock,

@@ -10,7 +10,8 @@ import { caseAction, resizeImage } from "../client-api";
 import HoldSummary from "../HoldSummary";
 import { Button, ErrorText, Panel } from "../ui";
 
-const HONOR_PERIOD_MS = 3 * 24 * 3600 * 1000;
+// Offer to renew once less than 2 days of the authorization remain.
+const RENEW_WINDOW_MS = 2 * 24 * 3600 * 1000;
 
 export default function RepairingStep({ view, token, refresh }: StepProps) {
   const c = view.case;
@@ -26,7 +27,7 @@ export default function RepairingStep({ view, token, refresh }: StepProps) {
   const [error, setError] = useState("");
 
   if (!payment) return null;
-  const pastHonorPeriod = Date.now() - new Date(payment.authorizedAt).getTime() > HONOR_PERIOD_MS;
+  const nearExpiry = new Date(payment.expiresAt).getTime() - Date.now() < RENEW_WINDOW_MS;
 
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -57,16 +58,16 @@ export default function RepairingStep({ view, token, refresh }: StepProps) {
     <>
       <Panel title="Money is on hold" tone="go">
         <p className="mb-3">
-          {payer.name}&apos;s PayPal has reserved {formatMoney(payment.authorizedAmount, c.currency)}. Nothing has been
-          charged.
+          {formatMoney(payment.authorizedAmount, c.currency)} is reserved on {payer.name}&apos;s {payment.description}.
+          Nothing has been charged.
         </p>
         <HoldSummary payment={payment} currency={c.currency} />
-        {pastHonorPeriod && (
+        {nearExpiry && (
           <div className="mt-4">
             <Button kind="secondary" onClick={extend}>
               Refresh the hold
             </Button>
-            <p className="mt-1 text-sm text-asphalt-soft">Holds are most reliable in their first 3 days. Refreshing keeps the money reserved while the repair takes longer.</p>
+            <p className="mt-1 text-sm text-asphalt-soft">The hold expires soon. Refreshing reserves the money again on the same payment method while the repair takes longer.</p>
           </div>
         )}
       </Panel>

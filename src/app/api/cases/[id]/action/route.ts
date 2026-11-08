@@ -55,8 +55,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         extra = { orderId };
         break;
       }
+      case "clientToken": {
+        const clientToken = await cases.paymentClientToken(c, me);
+        return NextResponse.json({ ok: true, clientToken });
+      }
       case "confirmHold":
-        await cases.confirmHold(c, me, String(body.orderId || ""));
+        await cases.confirmHold(c, me, { nonce: String(body.nonce || ""), orderId: String(body.orderId || "") });
+        break;
+      case "approveLine":
+        cases.setLineApproval(c, me, Number(body.lineIndex), body.approved === true);
         break;
       case "extendHold":
         await cases.extendHold(c, me);
