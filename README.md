@@ -102,7 +102,9 @@ Open **`/demo`**. It creates a fresh case and shows both drivers' phones side by
 
 ### Deploy
 
-`render.yaml` deploys the app to Render as a Node web service. Set the three secret environment variables in the Render dashboard.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Nafis8709/scuff)
+
+`render.yaml` describes a Node web service. Render asks for the secret environment variables (Braintree keys and `ANTHROPIC_API_KEY`) during deploy. Leave the PayPal ones empty when using Braintree.
 
 ## Project layout
 
