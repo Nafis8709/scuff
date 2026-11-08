@@ -2,7 +2,39 @@
 
 Scuff is an entry for the **PayPal AI Hackathon 2026**. It is built with **Braintree** (a PayPal service: authorize, partial settlement, void, vaulted re-authorization), an alternative **PayPal Orders and Payments API** integration, and a vision model with structured outputs: **Gemini** (free tier) or **Claude**.
 
-**Live demo:** https://scuff-ajvb.onrender.com. Open [`/demo`](https://scuff-ajvb.onrender.com/demo) to play both drivers side by side. It runs on Render's free plan, so the first visit after a quiet period can take about 50 seconds to wake up.
+| | |
+|---|---|
+| **Live app** | https://scuff-ajvb.onrender.com |
+| **Two-driver demo** (both phones on one screen) | https://scuff-ajvb.onrender.com/demo |
+| **Sample repair invoice** (fictional shop) | [sample-invoice.png](https://scuff-ajvb.onrender.com/samples/sample-invoice.png) |
+| **Braintree sandbox test card** | `4111 1111 1111 1111`, any future expiry date, any CVV |
+
+The live app runs on Render's free plan. The first visit after a quiet period can take about 50 seconds while the server wakes up.
+
+## Try it in 2 minutes (for judges)
+
+1. Open the **[two-driver demo](https://scuff-ajvb.onrender.com/demo)**. It creates a fresh case with Alex (paying) on the left and Sam (being paid) on the right.
+2. On **each** phone:
+   - answer *Nobody is hurt*;
+   - add a plate and a car, plus a PayPal email for Sam (any address works in the sandbox);
+   - add two photos of any scratch or dent and a one-line statement;
+   - press *I'm done documenting*.
+3. Read the AI damage report. Both drivers sign by typing their name.
+4. On Alex's phone, enter the **test card** and press *Hold*. Nothing is charged yet.
+5. On Sam's phone, upload the **[sample invoice](https://scuff-ajvb.onrender.com/samples/sample-invoice.png)**. Watch the headlamp and brake pads get rejected, and the tax get recalculated.
+6. Optional: on Alex's phone, approve a rejected line.
+7. On Sam's phone, press *Accept*. Only the verified amount is charged from the hold, and the rest is released. Open the receipt.
+
+## Verified with live services
+
+These checks ran on the deployed app (Gemini free tier and Braintree sandbox) on Nov 9, 2026:
+
+| Step | Result |
+|---|---|
+| Damage report from real collision photos | 14 s. It cited photo IDs per zone and spotted that the photos did not match the cars described. Because the crash photos showed possible structural damage, it recommended insurers instead |
+| Braintree hold | Authorization `$3,500` on a sandbox Visa, valid for 7 days |
+| Invoice check of the sample invoice | 11 s. Bumper, labour, paint and supplies supported; headlamp and brake pads rejected |
+| Charge | `$532.12` charged (items $502 plus prorated tax $30.12). The rest of the $3,500 hold was released |
 
 ## The problem
 
@@ -78,7 +110,12 @@ In both cases every response is valid JSON that matches our schema.
 - **Damage assessment.** Input is up to 12 labelled photos plus both statements. Output is damage zones with photo citations, a cost range, a neutral summary, statement conflicts, safety flags (airbags deployed, leaks, unsafe to drive, which means "use your insurer"), and suggestions for missing photos.
 - **Invoice check.** Input is the invoice image, the scene photos and the damage report. Output is a verdict and a reason for every line.
 
-The AI never writes the legal terms of the agreement, and never decides how much is paid. The agreement is a fixed template (`src/lib/agreement.ts`), and the amount is deterministic math over the AI's line verdicts (`totalSupported` in `ai.ts`).
+The AI never writes the legal terms of the agreement, and never decides how much is paid:
+- The agreement is a fixed template (`src/lib/agreement.ts`).
+- The amount is deterministic math over the AI's line verdicts (`src/lib/invoice-math.ts`).
+- Tax lines are shared out in proportion to the approved lines, because a live test showed a model returning the full printed tax for a partly-approved invoice.
+
+On the free tier Gemini sometimes answers "high demand". The app then tries a chain of models (`GEMINI_MODEL`, comma-separated) with a timeout on each.
 
 ## Run it locally
 
@@ -88,8 +125,22 @@ Requirements: Node 20 or newer.
 git clone https://github.com/Nafis8709/scuff.git
 cd scuff
 npm install
-cp .env.example .env.local   # add your keys (see below)
-npm run dev                  # http://localhost:3000
+cp .env.example .env.local   # optional: add your keys (see below)
+npm run dev                  # development server on http://localhost:3000
+```
+
+Production build:
+
+```bash
+npm run build
+npm start                    # http://localhost:3000
+```
+
+Checks:
+
+```bash
+npm run lint
+npm run typecheck
 ```
 
 **Without keys** the app runs in *practice mode*: AI results are sample data and payments are simulated. The whole flow can still be clicked through.
@@ -110,13 +161,18 @@ Open **`/demo`**. It creates a fresh case and shows both drivers' phones side by
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Nafis8709/scuff)
 
-`render.yaml` describes a Node web service. Render asks for the secret environment variables (Braintree keys and `ANTHROPIC_API_KEY`) during deploy. Leave the PayPal ones empty when using Braintree.
+`render.yaml` describes a Node web service (build `npm ci && npm run build`, start `npm start`). During deploy Render asks for the secret environment variables:
+- the three Braintree keys;
+- `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
+
+Leave the PayPal keys empty when using Braintree.
 
 ## Project layout
 
 ```
 src/lib/cases.ts      all business rules: who may do what, in which status
 src/lib/ai.ts         AI calls (damage report, invoice check) via Gemini or Claude, plus practice-mode samples
+src/lib/invoice-math.ts  the money math: supported + payer-approved lines, prorated tax, cap
 src/lib/payments.ts   picks the provider: Braintree, PayPal REST, or simulated
 src/lib/braintree.ts  Braintree: client token, authorize (vaulted), partial settle, void
 src/lib/paypal.ts     PayPal REST: create order, authorize, capture, void, reauthorize
@@ -127,6 +183,14 @@ src/components/...    the case room and one component per step
 ```
 
 Case statuses: `waiting → documenting → assessing → agreement → funding → repairing → reviewing → settled`, plus `stopped` (an injury was reported) and `closed`.
+
+## Tech stack
+
+- Next.js 15 (App Router), TypeScript and Tailwind CSS 4
+- SQLite via `better-sqlite3`
+- Braintree Node SDK and Drop-in UI; PayPal REST and the JS SDK
+- Gemini API (REST) or Claude via `@anthropic-ai/sdk`
+- Hosted on Render
 
 ## Safety and limits
 
